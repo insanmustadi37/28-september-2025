@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HBD SENG</title>
+<style>
+  :root{--ui:#00d1ff;--bg:#0b0f1a;--panel:rgba(255,255,255,.08);--border:rgba(255,255,255,.18)}
+  html,body{height:100%;margin:0;background:var(--bg);color:#fff;font:500 14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  #game{display:block;width:100vw;height:100vh;background:#1a2033}
+  .hud{position:fixed;inset:0;pointer-events:none}
+  .hud .bar{position:absolute;left:16px;right:16px;top:12px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+  .pill{backdrop-filter:blur(8px);background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:8px 12px;pointer-events:auto}
+  .title{font-weight:700;letter-spacing:.5px}
+  .score{display:flex;gap:14px}
+  .btn{cursor:pointer;border-radius:12px;border:1px solid var(--border);padding:8px 12px;background:#fff;color:#000;font-weight:700}
+  .btn:hover{filter:brightness(1.1)}
+  .overlay{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(180deg,rgba(0,0,0,.5),rgba(0,0,0,.8));}
+  .card{width:min(560px,90vw);padding:18px 18px 14px;border-radius:20px;background:var(--panel);border:1px solid var(--border);backdrop-filter:blur(10px)}
+  .card h1{margin:4px 0 10px;font-size:22px}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>div{flex:1 1 220px}
+  label{display:block;font-size:12px;opacity:.85;margin-bottom:4px}
+  input,select{width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#0c1220;color:#fff}
+  .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+  .credit{opacity:.7;font-size:12px;margin-top:8px}
+  .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:8px 12px;background:#111;border:1px solid var(--border);border-radius:10px;display:none}
+  .celebrate{position:fixed;inset:0;display:none;place-items:center;text-align:center}
+  .celebrate h2{font-size:clamp(24px,5vw,48px);margin:0 12px;text-shadow:0 2px 0 #000,0 0 28px #00b7ff}
+  .celebrate p{opacity:.9}
+  .bigwish{margin-top:8px;font-weight:900;letter-spacing:.5px;line-height:1.1;
+           font-size:clamp(28px,7vw,72px);
+           text-shadow:0 3px 0 #000,0 0 28px rgba(0,209,255,.6)}
+  .death{position:fixed;inset:0;display:none;place-items:center;text-align:center;background:rgba(0,0,0,.35)}
+  .death .box{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:14px 18px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- HUD -->
+<div class="hud">
+  <div class="bar">
+    <div class="pill title">Zahra – Birthday Edition 🎂</div>
+    <div class="pill score"><span id="score">Koin: 0</span><span id="time">Waktu: 0</span></div>
+    <div class="pill"><button id="btnShot" class="btn">📸 Simpan Tangkapan</button></div>
+  </div>
+</div>
+
+<!-- Overlay Start -->
+<div id="start" class="overlay">
+  <div class="card">
+    <h1>HBD SENG</h1>
+    <div class="row">
+      <div>
+        <label>Nama</label>
+        <input id="name" placeholder="Masukkan nama">
+      </div>
+      <div>
+        <label>Umur</label>
+        <input id="age" type="number" min="1" max="150" />
+      </div>
+      <div>
+        <label>Kesulitan</label>
+        <select id="difficulty">
+          <option value="easy">Mudah</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Sulit</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="play" class="btn">▶ Mulai</button>
+    </div>
+    <div class="credit">Catatan: Ini proyek fan-made, semua aset digambar dengan canvas (tanpa materi berhak cipta).</div>
+  </div>
+</div>
+
+<!-- Celebration Banner -->
+<div id="celebration" class="celebrate">
+  <div>
+    <h2 id="greet">Selamat Ulang Tahun!</h2>
+    <div class="bigwish" id="bigwish">SEHAT, BAHAGIA, & SUKSES SELALU 🎉</div>
+    <p>Panjang umur, dijauhkan dari marabahaya, rezeki lancar, dan karier makin melejit!
+    <br>Tekan <b>R</b> untuk main lagi • <b>📸 Simpan Tangkapan</b> di pojok kanan untuk menyimpan ucapan</p>
+  </div>
+</div>
+
+<!-- Death Banner -->
+<div id="death" class="death">
+  <div class="box">
+    <b>Oops! Jatuh / Tertabrak musuh 🌪️</b>
+    <div>Restart otomatis...</div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Tersimpan ke file gambar.</div>
+
+<script>
+(() => {
+  // ===== Setup & constants
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  function resize(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  window.addEventListener('resize', resize, { passive:true }); resize();
+
+  const TILE=32, G=0.6, FRICTION=0.85, STEP=8;
+  const JUMP_V=-15;      // lompatan tetap seperti sebelumnya
+  const MAX_FALL=16;
+  const KEYS = { left:false, right:false, up:false };
+  window.addEventListener('keydown', e => {
+    if (e.code==='ArrowLeft'||e.code==='KeyA') KEYS.left = true;
+    if (e.code==='ArrowRight'||e.code==='KeyD') KEYS.right = true;
+    if (e.code==='ArrowUp'||e.code==='Space'||e.code==='KeyW') KEYS.up = true;
+    if (e.code==='KeyR') restart();
+  });
+  window.addEventListener('keyup', e => {
+    if (e.code==='ArrowLeft'||e.code==='KeyA') KEYS.left = false;
+    if (e.code==='ArrowRight'||e.code==='KeyD') KEYS.right = false;
+    if (e.code==='ArrowUp'||e.code==='Space'||e.code==='KeyW') KEYS.up = false;
+  });
+
+  // ===== Game state
+  let state='start';
+  let player=null, world=null, camX=0, score=0, timeSec=0, nameStr='Sahabat', ageNum=21, diff='normal', loopCount=0;
+  const coins=[], enemies=[], particles=[], fireworks=[];
+
+  function restart(){
+    score=0; timeSec=0; camX=0; loopCount++;
+    particles.length=0; fireworks.length=0; enemies.length=0; coins.length=0;
+    buildWorld(); settlePlatforms(); spawnEntitiesFromMap(); addEnemiesAuto();
+    player={ x:TILE*2, y:TILE*2, w:22, h:28, vx:0, vy:0, onGround:false, face:1, inv:0 };
+    state='playing';
+    document.getElementById('celebration').style.display='none';
+    document.getElementById('death').style.display='none';
+  }
+
+  // ===== Level/world
+  const RAW=[
+    '............................................................................................',
+    '............................................................................................',
+    '..........................................C...............C................................',
+    '.....................C..............................................C......................',
+    '.....................###..............C..............###...................................',
+    '.............C...................#######....................C..............................',
+    '.............###.................................C.......#####....................C........',
+    'PP.................P.............P.......P.................................................', /* P akan diturunkan */
+    'XXXXXXXXXXXXXX.....XXXX...........XXXXXX...............XXXXXXX.............XXXX......XXXXXX',
+    'XXXXXXXXXXXXXX#####XXXX#######.####XXXXXX##########.####XXXXXXX#####.######XXXX######XXXXXX',
+  ];
+  const GOAL_X = RAW[0].length - 6;
+
+  function buildWorld(){
+    world = RAW.map((row,y) => {
+      const r = row.split('');
+      if (y === RAW.length-2) r[GOAL_X] = 'B';
+      return r;
+    });
+  }
+  buildWorld();
+  settlePlatforms(); // pastikan 'P' tidak melayang saat layar start
+
+  // Turunkan semua 'P' sampai MENYENTUH lantai padat di bawahnya.
+  // Jika kolomnya murni lubang (tak ada ubin padat sampai dasar), hapus 'P' agar tidak melayang/menutup lubang.
+  function settlePlatforms(){
+    for (let y=0; y<world.length; y++){
+      for (let x=0; x<world[0].length; x++){
+        if (world[y][x] !== 'P') continue;
+
+        let targetY = -1;
+        for (let ty = y; ty < world.length - 1; ty++){
+          if (isSolid(world[ty+1][x])) targetY = ty;
+        }
+
+        if (targetY >= 0){
+          world[targetY][x] = 'P';
+          if (targetY !== y) world[y][x] = '.';
+        } else {
+          world[y][x] = '.'; // tidak ada lantai di bawah -> hapus
+        }
+      }
+    }
+  }
+
+  function spawnEntitiesFromMap(){
+    if (!world) return;
+    for (let y=0;y<world.length;y++){
+      for (let x=0;x<world[0].length;x++){
+        const ch = world[y][x], px=x*TILE, py=y*TILE;
+        if (ch==='C'){ coins.push({x:px+8,y:py+8,w:16,h:16,vy:0,phase:Math.random()*6}); world[y][x]='.'; }
+        if (ch==='E'){ enemies.push(makeEnemy(px+4, py-8)); world[y][x]='.'; }
+      }
+    }
+  }
+
+  function addEnemiesAuto(){
+    if (!world) return;
+    const cols=[25,45,70,95,120,145,170,195];
+    for (const cx of cols){
+      const x = cx*TILE + 4;
+      let groundY = null;
+      for (let ty=0; ty<world.length; ty++){
+        const ch = world[ty][cx];
+        if (isSolid(ch)) groundY = ty*TILE;
+      }
+      if (groundY!==null){
+        enemies.push(makeEnemy(x, groundY - 26));
+      }
+    }
+  }
+
+  function makeEnemy(x,y){
+    return { x, y, w:24, h:24, vx:(Math.random()<.5?-1:1)*1.2, vy:0, alive:true, type:'goomba' };
+  }
+
+  function tileAt(px,py){
+    const tx=Math.floor(px/TILE), ty=Math.floor(py/TILE);
+    if (!world) return 'X';
+    if (ty<0||ty>=world.length||tx<0||tx>=world[0].length) return 'X';
+    return world[ty][tx];
+  }
+  function isSolid(ch){ return ch==='X'||ch==='#'||ch==='P'||ch==='B'; }
+
+  // ===== Drawing helpers
+  function drawBackground(){
+    // Langit gradient
+    const g = ctx.createLinearGradient(0,0,0,canvas.height);
+    g.addColorStop(0,'#0e1630'); g.addColorStop(1,'#09101e');
+    ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // (DIHAPUS) — tidak ada siluet segitiga/mountains
+
+    // Awan halus
+    ctx.fillStyle='#e6f6ff';
+    for(let i=0;i<8;i++){
+      const x=(i*260 - (camX*0.6%260));
+      const y=80 + 30*Math.sin(i*.7);
+      drawCloud(x,y);
+    }
+
+    // Pita tanah dekoratif di bawah layar (platform visual)
+    const h = Math.floor(Math.max(56, canvas.height*0.12));
+    const y = canvas.height - h;
+    const gb = ctx.createLinearGradient(0,y,0,canvas.height);
+    gb.addColorStop(0,'#0c1122'); gb.addColorStop(1,'#070b16');
+    ctx.fillStyle = gb; ctx.fillRect(0,y,canvas.width,h);
+    // garis highlight di atas pita
+    ctx.fillStyle = 'rgba(255,255,255,.08)';
+    ctx.fillRect(0,y,canvas.width,2);
+    // pola halus
+    ctx.globalAlpha = 0.18;
+    for (let i=0;i<canvas.width;i+=24){ ctx.fillRect(i,y+10,12,4); }
+    ctx.globalAlpha = 1;
+  }
+  function drawCloud(x,y){
+    ctx.save(); ctx.translate(x,y);
+    ctx.beginPath();
+    ctx.arc(0,0,16,0,Math.PI*2);
+    ctx.arc(20,-6,14,0,Math.PI*2);
+    ctx.arc(40,0,18,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+  function drawTile(x,y,ch){
+    const px=x*TILE-camX, py=y*TILE;
+    if (ch==='X'){
+      ctx.fillStyle='#5b3a1a'; ctx.fillRect(px,py,TILE,TILE);
+      ctx.fillStyle='#7a4a25'; ctx.fillRect(px,py,TILE,6);
+    } else if (ch==='#'){
+      ctx.fillStyle='#9e3e2e'; ctx.fillRect(px,py,TILE,TILE);
+    } else if (ch==='P'){
+      ctx.fillStyle='#1f8b4c'; ctx.fillRect(px+4,py+4,TILE-8,TILE-4);
+    } else if (ch==='B'){
+      drawCake(px+TILE*0.1, py+TILE*0.25);
+      ctx.fillStyle='#e2e8f0'; ctx.fillRect(px+TILE*0.7, py-6, 5, TILE*2);
+      ctx.fillStyle='#00d1ff'; ctx.fillRect(px+TILE*0.7+5, py-2, 18, 8);
+    }
+  }
+  function drawCake(x,y){
+    ctx.save(); ctx.translate(x,y);
+    ctx.fillStyle='#eaeaea'; ctx.fillRect(0,22,38,6);
+    ctx.fillStyle='#ffd1a8'; ctx.fillRect(4,4,30,20);
+    ctx.fillStyle='#ff7aa2'; ctx.fillRect(4,14,30,6);
+    ctx.fillStyle='#35a7ff'; ctx.fillRect(18,-8,4,12);
+    ctx.fillStyle='#ffde59'; ctx.beginPath(); ctx.ellipse(20,-10,4,6,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  function drawCoins(){
+    for (const c of coins){
+      const px=c.x-camX, py=c.y + Math.sin(c.phase+=0.08)*2;
+      ctx.fillStyle='#ffd54a';
+      ctx.beginPath(); ctx.ellipse(px+8,py+8,10,10,0,0,Math.PI*2); ctx.fill();
+    }
+  }
+  function drawEnemies(){
+    for (const e of enemies){
+      if (!e.alive) continue;
+      const px=e.x-camX, py=e.y;
+      ctx.fillStyle='#3a9d23'; ctx.fillRect(px,py,e.w,e.h);
+      ctx.fillStyle='#0b0b0b';
+      ctx.fillRect(px+6,py+6,4,4); ctx.fillRect(px+e.w-10,py+6,4,4);
+    }
+  }
+  function drawPlayer(){
+    const px=player.x-camX, py=player.y;
+    ctx.fillStyle='#ff3b30'; ctx.fillRect(px,py,player.w,player.h);
+    ctx.fillStyle='#b8271f'; ctx.fillRect(px-2,py-8,player.w+4,10);
+    ctx.fillStyle='#ffd7b5'; ctx.fillRect(px+4,py+6,player.w-8,player.h-12);
+    ctx.fillStyle='#472c1b'; ctx.fillRect(px+4,py+16,player.w-8,4);
+  }
+  function drawParticles(){
+    for (const p of particles){
+      ctx.fillStyle=p.color; ctx.fillRect(p.x-camX,p.y,p.s,p.s);
+    }
+    for (const f of fireworks){
+      ctx.fillStyle=f.color; ctx.fillRect(f.x-camX,f.y,3,3);
+    }
+  }
+
+  function aabb(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+  // ===== Update Loop
+  let last=0;
+  function tick(ts){
+    const dt=(ts-last)/16.67; last=ts;
+
+    if (state==='playing') timeSec += dt*0.0167*60;
+
+    if (state==='playing' && player){
+      // input & fisika
+      if (KEYS.left) player.vx -= 0.6;
+      if (KEYS.right) player.vx += 0.6;
+      player.vx *= FRICTION; player.vy += G;
+      if (player.vx > 5) player.vx = 5;
+      if (player.vx < -5) player.vx = -5;
+      if (player.vy > MAX_FALL) player.vy = MAX_FALL;
+      if (KEYS.up && player.onGround){ player.vy = JUMP_V; player.onGround=false; }
+      if (player.inv>0) player.inv--;
+
+      moveAndCollide(player);
+
+      // === Masuk LUBANG → alur mati sama seperti enemy (banner → restart)
+      if (!player.onGround && player.vy > 0){
+        const centerX = player.x + player.w/2;
+        const bottomY = player.y + player.h;
+        const levelBottom = world.length * TILE;
+        const bottomTile = tileAt(centerX, (world.length - 1) * TILE);
+        const isHoleColumn = !isSolid(bottomTile);
+        if (bottomY >= levelBottom && isHoleColumn) die('fall');
+      }
+      // Kill-plane cadangan
+      if (player.y > world.length * TILE + 120) die('fall');
+
+      // coins
+      for (let i=coins.length-1;i>=0;i--){
+        const c=coins[i];
+        if (aabb(player,{x:c.x,y:c.y,w:16,h:16})){
+          coins.splice(i,1); score+=1; spawnSparkle(c.x,c.y);
+        }
+      }
+
+      // musuh
+      for (const e of enemies){
+        if (!e.alive) continue;
+        updateEnemy(e);
+        if (e.y > world.length*TILE + 400) e.alive=false;
+
+        if (aabb(player,e)){
+          const stomp = (player.vy>1) && ((player.y + player.h) - e.y) < 12;
+          if (stomp){
+            e.alive=false; score+=3; spawnSparkle(e.x+e.w/2, e.y+e.h/2);
+            player.vy = JUMP_V * 0.66; // mantul
+          } else if (player.inv<=0){
+            die('enemy');
+          }
+        }
+      }
+
+      // goal
+      const goalRect = { x:(GOAL_X*TILE), y:( (world.length-2)*TILE ), w:TILE, h:TILE };
+      if (aabb(player, goalRect)) triggerCelebrate();
+
+      // kamera
+      camX = Math.max(0, Math.min(player.x - canvas.width/2 + player.w/2, world[0].length*TILE - canvas.width));
+    }
+
+    // render
+    drawBackground();
+    if (world){
+      const x0 = Math.floor(camX / TILE) - 2, x1 = Math.ceil((camX + canvas.width) / TILE) + 2;
+      for (let y=0;y<world.length;y++){
+        for (let x=x0;x<x1;x++){
+          if (x<0 || x>=world[0].length) continue;
+          const ch = world[y][x];
+          if (ch!=='.') drawTile(x,y,ch);
+        }
+      }
+    }
+
+    drawCoins();
+    drawEnemies();
+    if (player) drawPlayer();
+    updateParticles(dt); drawParticles();
+
+    document.getElementById('score').textContent = `Koin: ${score}`;
+    document.getElementById('time').textContent = `Waktu: ${Math.floor(timeSec)}s`;
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // ======== COLLISION GRID + STEP-UP =========
+  function rectIntersectsSolid(rx,ry,rw,rh){
+    const left = Math.floor(rx / TILE);
+    const right = Math.floor((rx + rw - 1) / TILE);
+    const top = Math.floor(ry / TILE);
+    const bottom = Math.floor((ry + rh - 1) / TILE);
+    for (let ty=top; ty<=bottom; ty++){
+      for (let tx=left; tx<=right; tx++){
+        if (isSolid(tileAt(tx*TILE, ty*TILE))) return true;
+      }
+    }
+    return false;
+  }
+  function pushOut(p, axis, dir, limit=16){
+    let i=0;
+    while (rectIntersectsSolid(p.x,p.y,p.w,p.h) && i<limit){
+      if (axis==='x') p.x += dir; else p.y += dir;
+      i++;
+    }
+    return i<limit;
+  }
+  function moveAndCollide(p){
+    // Horizontal + step-up
+    p.x += p.vx;
+    if (rectIntersectsSolid(p.x,p.y,p.w,p.h)){
+      let stepped=false;
+      for (let s=1; s<=STEP; s++){
+        if (!rectIntersectsSolid(p.x, p.y - s, p.w, p.h)){ p.y -= s; stepped=true; break; }
+      }
+      if (!stepped){
+        const dir = p.vx>0 ? -1 : 1;
+        pushOut(p, 'x', dir, 24);
+        p.vx = 0;
+      }
+    }
+    // Vertikal
+    p.y += p.vy;
+    p.onGround = false;
+    if (rectIntersectsSolid(p.x,p.y,p.w,p.h)){
+      if (p.vy>0){ pushOut(p, 'y', -1, 24); p.vy = 0; p.onGround = true; }
+      else if (p.vy<0){ pushOut(p, 'y', 1, 24); p.vy = 0; }
+    }
+  }
+
+  // ===== Musuh (patroli + fisika grid)
+  function updateEnemy(e){
+    e.vy += G;
+    // horizontal
+    e.x += e.vx;
+    if (rectIntersectsSolid(e.x,e.y,e.w,e.h)){
+      const dir = e.vx>0 ? -1 : 1;
+      pushOut(e,'x',dir,24);
+      e.vx *= -1;
+    }
+    // vertikal
+    e.y += e.vy;
+    if (rectIntersectsSolid(e.x,e.y,e.w,e.h)){
+      if (e.vy>0){ pushOut(e,'y',-1,24); e.vy=0; }
+      else { pushOut(e,'y',1,24); e.vy=0; }
+    }
+    // tepi/halangan: balik kalau depan jurang atau ada dinding
+    const aheadX = e.vx>0 ? e.x + e.w + 1 : e.x - 1;
+    const footY = e.y + e.h + 1;
+    const tileAheadBelow = tileAt(aheadX, footY);
+    const tileAhead = tileAt(aheadX, e.y + e.h/2);
+    if (!isSolid(tileAheadBelow) || isSolid(tileAhead)){
+      e.vx *= -1;
+    }
+  }
+
+  // ===== Particles & fireworks
+  function spawnSparkle(x,y){
+    for (let i=0;i<8;i++){
+      particles.push({ x:x+Math.random()*8, y:y+Math.random()*8, vx:(Math.random()-0.5)*2, vy:(Math.random()-1.5)*2, s:3+Math.random()*2, life:30+Math.random()*20, color: randColor() });
+    }
+  }
+  function updateParticles(dt){
+    for (let i=particles.length-1;i>=0;i--){
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.2;
+      if (--p.life<=0) particles.splice(i,1);
+    }
+    for (let i=fireworks.length-1;i>=0;i--){
+      const f = fireworks[i];
+      f.x += f.vx; f.y += f.vy; f.vy += 0.08;
+      if (--f.life<=0) fireworks.splice(i,1);
+    }
+  }
+  function spawnFirework(x,y){
+    for (let i=0;i<80;i++){
+      const a = Math.random()*Math.PI*2, sp = 2+Math.random()*3;
+      fireworks.push({ x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:40+Math.random()*20, color: randColor() });
+    }
+  }
+  function randColor(){
+    const colors=['#00d1ff','#ffde59','#ff7aa2','#9cff6c','#ffd54a'];
+    return colors[Math.floor(Math.random()*colors.length)];
+  }
+
+  // ===== UI
+  const $start = document.getElementById('start');
+  const $play  = document.getElementById('play');
+  const $name  = document.getElementById('name');
+  const $age   = document.getElementById('age');
+  const $diff  = document.getElementById('difficulty');
+  const $cele  = document.getElementById('celebration');
+  const $greet = document.getElementById('greet');
+  const $big   = document.getElementById('bigwish');
+  const $shot  = document.getElementById('btnShot');
+  const $toast = document.getElementById('toast');
+  const $death = document.getElementById('death');
+
+  $play.addEventListener('click', () => {
+    nameStr = ($name.value||'Sahabat');
+    ageNum = Math.max(1, parseInt($age.value||'1',10));
+    diff = $diff.value;
+    $start.style.display = 'none';
+    restart();
+  });
+
+  function triggerCelebrate(){
+    state = 'celebrate';
+    $cele.style.display = 'grid';
+    $greet.textContent = `Selamat Ulang Tahun, ${nameStr}! Ke-${ageNum} 🎉`;
+    $big.textContent = `SEHAT, BAHAGIA, & SUKSES SELALU 🎉`;
+    for (let i=0;i<6;i++){
+      setTimeout(()=>spawnFirework(player.x + (i-2)*40, canvas.height*0.35 + i*8), i*180);
+    }
+  }
+
+  function die(reason='fall'){
+    if (state!=='playing') return;
+    state='dead';
+    $death.style.display='grid';
+    spawnSparkle(player.x+player.w/2, player.y+player.h/2);
+    setTimeout(()=>restart(), 900);
+  }
+
+  $shot.addEventListener('click', () => {
+    const data = canvas.toDataURL('image/png');
+    const a = document.createElement('a'); a.href = data; a.download = `ulang-tahun-${nameStr}.png`; a.click();
+    $toast.style.display='block'; setTimeout(()=> $toast.style.display='none', 1400);
+  });
+})();
+</script>
+</body>
+</html>
